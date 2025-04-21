@@ -1,112 +1,129 @@
 package cl.camel.routes;
 
-import java.time.LocalTime;
-import java.util.List;
-
 import org.apache.camel.builder.RouteBuilder;
+import org.apache.camel.model.dataformat.JsonLibrary;
 import org.springframework.stereotype.Component;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
-import cl.camel.model.Usuario;
-import lombok.extern.slf4j.Slf4j;
-
-@Slf4j
 @Component
 public class ApiRoute extends RouteBuilder {
 
     @Override
-    public void configure() {
-    	
-    	onException(IllegalArgumentException.class)
-        .log("Error al procesar el JSON: ${exception.message}")
-        .handled(true)
-        .to("file:data/errores?fileName=error_${date:now:yyyyMMddHHmmss}.log"); // Guardar error en archivo
-    	
-        from("timer:servicio-timer?period=30000") //30seg
-            .routeId("Servicio usuario")
-            .log("Iniciando ejecución")
-            //Según hora seleccionar endpoint
-            .process(exchange -> {
-                int hour = LocalTime.now().getHour();
-                String endpoint = (hour < 12)
-                    ? "https://jsonplaceholder.typicode.com/todos"
-                    : "https://jsonplaceholder.typicode.com/todos/1";
+    public void configure() throws Exception {
 
-                log.info("Hora actual: {}h - Endpoint seleccionado: {}", hour, endpoint);
-                exchange.setProperty("endpoint", endpoint);
-            })
+        // Manejo de excepciones
+        onException(IllegalArgumentException.class)
+            .log("Error al procesar el JSON: ${exception.message}")
+            .handled(true)
+            .to("file:data/errores?fileName=error_${date:now:yyyyMMddHHmmss}.log");
 
-            .toD("${exchangeProperty.endpoint}")
-            .log("Respuesta del servicio obtenida")
+        // Ruta que Inicial
+        from("timer:disparador?repeatCount=1")
+            .routeId("RutaInicial")
+            .log("Ejecutado a las ${date:now:yyyy-MM-dd HH:mm:ss}")
+            .choice()
+            .when(simple("${properties:token} == 'true'"))
+                .to("direct:token")
+            .otherwise()
+            	.to("direct:token2")
+            .end();
+           
+
+        // Ruta principal del servicio
+        from("direct:token")
+            .routeId("RutaHabilitada")
+            .log("Iniciando ejecución de ServicioToken")
+
+            // Llamada HTTP al servicio externo
+            .choice()
+                .when(simple("${properties:token} == 'true'"))
+                    .log("Request a endpoint ...")
+                    //.toD("http://localhost:8080/api/arca/wssa/${header.dynamicFolder}");
+                    .to("http://localhost:8080/api/arca/wssa")
+                    .log("Respuesta del servicio obtenida: ${body}")
+                .otherwise()
+                    .log("No hay Endpoint configurado en propertie (token)")
+            .end()
+
+            // Validar contenido
+            .convertBodyTo(String.class)
+            .filter().simple("${body} == null || ${body.trim().isEmpty()}")
+                .throwException(new IllegalArgumentException("El JSON recibido está vacío."))
+            .end()
+
+            // Guardar JSON 
+            .to("file:data/token?fileName=token.json&charset=utf-8")
+            .log("Archivo JSON guardado en data/token/token.json")
+
+            // Guardar TXT
+            .to("file:data/token?fileName=token.txt&charset=utf-8")
+            .log("Archivo TXT guardado en data/token/token.txt")
+
+            // Convertir JSON a CSV
+            .unmarshal().json() 
+            .marshal().csv()
+            .to("file:data/token?fileName=token.csv&charset=utf-8")
+            .log("CSV generado correctamente en data/token/token.csv")
+
+            // Leer archivo JSON guardado
+            .pollEnrich("file:data/token?fileName=token.json&noop=true")
+            .log("Leyendo archivo JSON local...")
+            .unmarshal().json(JsonLibrary.Jackson)
+            .choice()
+                .when(simple("${body} is 'java.util.List'"))
+                    .split().body()
+                    .log("Token: ${body[token]}")
+                .endChoice()
+                .otherwise()
+                    .log("Token: ${body[token]}")
+            .end()
+
+            // Leer y mostrar archivo TXT
+            .pollEnrich("file:data/token?fileName=token.txt&noop=true")
+            .convertBodyTo(String.class)
+            .log("Contenido del archivo TXT")
+            .log("${body}")
             
-            //Valido JSON
-            .process(exchange -> {
-                String json = exchange.getIn().getBody(String.class);
-                if (json == null || json.trim().isEmpty()) {
-                    throw new IllegalArgumentException("El JSON recibido está vacío.");
-                }
-            })
-            .log("JSON validado")
-       
-            //Guardar JSON en archivo
-            .to("file:data/usuarios?fileName=respuesta.json&charset=utf-8")
-            .log("Archivo JSON guardado")
-
-            //Convertir JSON a CSV
-            .process(exchange -> {
-                String json = exchange.getIn().getBody(String.class);
-                ObjectMapper mapper = new ObjectMapper();
-                StringBuilder csvBuilder = new StringBuilder("id,title,completed\n");
-
-                if (json.trim().startsWith("[")) {
-                    List<Usuario> usuarios = mapper.readValue(json, new TypeReference<List<Usuario>>() {});
-                    for (Usuario u : usuarios) {
-                        csvBuilder.append(u.getId()).append(",\"")
-                            .append(u.getTitle().replace("\"", "\"\"")).append("\",")
-                            .append(u.isCompleted()).append("\n");
-                    }
-                } else {
-                    Usuario u = mapper.readValue(json, Usuario.class);
-                    csvBuilder.append(u.getId()).append(",\"")
-                        .append(u.getTitle().replace("\"", "\"\"")).append("\",")
-                        .append(u.isCompleted()).append("\n");
-                }
-
-                exchange.getIn().setBody(csvBuilder.toString());
-            })
-            .to("file:data/usuarios?fileName=usuarios.csv&charset=utf-8")
-            .log("CSV generado")
-
-            //Leer archivo guardado
-            .pollEnrich("file:data/usuarios?fileName=respuesta.json&noop=true")
-            .log("Leyendo archivo local...")
-            .process(exchange -> {
-                String json = exchange.getIn().getBody(String.class);
-                ObjectMapper mapper = new ObjectMapper();
-
-                if (json.trim().startsWith("[")) {
-                    List<Usuario> usuarios = mapper.readValue(json, new TypeReference<List<Usuario>>() {});
-                    log.info("Procesando {} usuarios desde archivo:", usuarios.size());
-                    for (Usuario usuario : usuarios) {
-                        mostrarUsuario(usuario);
-                    }
-                } else {
-                    Usuario usuario = mapper.readValue(json, Usuario.class);
-                    log.info("Procesando un usuario desde archivo:");
-                    mostrarUsuario(usuario);
-                }
-            })
-
-            .log("Proceso completo finalizado.");
-    }
+            .log("Proceso finalizado.")
+            .log("────────────────────────────────────────");
+        
+    // Ruta desactivada
+        from("direct:token2")
+        	.routeId("RutaDesactivada")
+        	.log("Ruta desactivada");
+        
+        
+     // Ruta de busqueda y mover archivo
+        from("file:data/token?fileName=token.json&noop=true")
+            .routeId("RutaProcesarArchivos")
+            .log("Leyendo archivo: ${file:name}")
+            .convertBodyTo(String.class) 
+            .filter().simple("${body} contains 'version'") 
+                .to("file:data/error?fileName=error_${file:name}") // Mover archivo con error a otra carpeta
+                .log("Archivo con error guardado: ${file:name}")
+            .end()
+            .to("file:data/processed?fileName=${file:name}") // Mover archivo procesado a la carpeta 'processed'
+            .log("Archivo procesado guardado: ${file:name}");
+        
+        
+// -----------------------------------------EJEMPLOS-------------------------------------------------------------------------------------------------       
+//         Ruta cada cierto tiempo disparar ruta
+//        from("timer:reloj?period=60000") // 60 segundos
+//            .routeId("RutaTimer")
+//            .to("direct:token");
 
 
-    private void mostrarUsuario(Usuario usuario) {
-        log.info("ID: {}", usuario.getId());
-        log.info("Título: {}", usuario.getTitle());
-        log.info("Completado: {}", usuario.isCompleted());
-        log.info("────────────────────────────");
+//         Ruta para consultar una base de datos o puedo utilizar un .bean llamando a un metodo en de usar .process
+//        from("timer:consultaTransacciones?repeatCount=1")
+//            .routeId("ConsultaTransacciones")
+//            .setBody(constant("cliente123")) // Nombre del cliente a consultar
+//            .log("Contando transacciones del cliente: ${body}")
+//            .process(exchange -> {
+//                String customer = exchange.getIn().getBody(String.class);
+//                long count = repository.countByCustomer(customer);
+//                exchange.getMessage().setBody("Cliente: " + customer + " → Total transacciones: " + count);
+//            })
+//            .log("${body}")
+//            .log("Consulta de transacciones finalizada.");
+        
     }
 }

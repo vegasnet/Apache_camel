@@ -47,14 +47,38 @@
 		<dependency>
 	    	<groupId>org.apache.camel.springboot</groupId>
 	    	<artifactId>camel-direct-starter</artifactId>
-	    	<version>4.11.0</version> <!-- Usa la misma versión que el resto de tus starters de Camel -->
+	    	<version>4.11.0</version> 
 		</dependency>
 		<dependency>
-		    <groupId>org.apache.camel</groupId>
-		    <artifactId>camel-http</artifactId>
+		    <groupId>org.apache.camel.springboot</groupId>
+		    <artifactId>camel-http-starter</artifactId>
 		    <version>4.11.0</version>
 		</dependency>
 		
+		<dependency>
+		    <groupId>org.apache.camel.springboot</groupId>
+		    <artifactId>camel-csv-starter</artifactId>
+		    <version>4.11.0</version>
+		</dependency>
+		
+		<dependency>
+		    <groupId>org.apache.camel.springboot</groupId>
+		    <artifactId>camel-core-starter</artifactId>
+		    <version>4.11.0</version>
+		</dependency>
+		
+		<dependency>
+		    <groupId>org.apache.camel</groupId>
+		    <artifactId>camel-bean</artifactId>
+		    <version>4.11.0</version>
+		</dependency>
+		<dependency>
+		    <groupId>org.apache.camel</groupId>
+		    <artifactId>camel-rest</artifactId>
+		    <version>4.11.0</version>
+		</dependency>
+
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-devtools</artifactId>
